@@ -10,8 +10,6 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 
 from .model import GRUDecoder
-from .model_Transformer import TransformerEncoder
-from .model_conformer import ConformerEncoder
 from .dataset import SpeechDataset
 
 
@@ -65,82 +63,42 @@ def trainModel(args):
 
     with open(args["outputDir"] + "/args", "wb") as file:
         pickle.dump(args, file)
-    
+
     trainLoader, testLoader, loadedData = getDatasetLoaders(
         args["datasetPath"],
         args["batchSize"],
     )
-    if args['model'] == 'GRU':
-        model = GRUDecoder(
-            neural_dim=args["nInputFeatures"],
-            n_classes=args["nClasses"],
-            hidden_dim=args["nUnits"],
-            layer_dim=args["nLayers"],
-            nDays=len(loadedData["train"]),
-            dropout=args["dropout"],
-            device=device,
-            strideLen=args["strideLen"],
-            kernelLen=args["kernelLen"],
-            gaussianSmoothWidth=args["gaussianSmoothWidth"],
-            bidirectional=args["bidirectional"],
-            temporalMaxLen=args["temporalMaxLen"],
-            temporalMaskP=args["temporalMaskProb"],
-            temporalMaskValue=0.0,
-            temporalNumMask=args['temporalNumMask'],
-        ).to(device)
 
-        if args['load_weights']:
-            model.load_state_dict(torch.load(args['load_weights_path'], map_location=device))
+    model = GRUDecoder(
+        neural_dim=args["nInputFeatures"],
+        n_classes=args["nClasses"],
+        hidden_dim=args["nUnits"],
+        layer_dim=args["nLayers"],
+        nDays=len(loadedData["train"]),
+        dropout=args["dropout"],
+        device=device,
+        strideLen=args["strideLen"],
+        kernelLen=args["kernelLen"],
+        gaussianSmoothWidth=args["gaussianSmoothWidth"],
+        bidirectional=args["bidirectional"],
+    ).to(device)
 
-    elif args['model'] == 'Transformer':
-        model = TransformerEncoder(
-            neural_dim=args["nInputFeatures"],
-            n_classes=args["nClasses"],
-            hidden_dim=args["nUnits"],
-            layer_dim=args["nLayers"],
-            nhead=args["nhead"],
-            nDays=len(loadedData["train"]),
-            dropout=args["dropout"],
-            device=device,
-            strideLen=args["strideLen"],
-            kernelLen=args["kernelLen"],
-            gaussianSmoothWidth=args["gaussianSmoothWidth"],    
-            temporalMaxLen=args["temporalMaxLen"],
-            temporalMaskP=args["temporalMaskProb"],
-            temporalMaskValue=0.0,
-            temporalNumMask=args["temporalNumMask"],
-        ).to(device)
-        if args['load_weights']:
-            model.load_state_dict(torch.load(args['load_weights_path'], map_location=device))
-    
-    elif args['model'] == 'Conformer':
-        model = ConformerEncoder(
-            neural_dim=args["nInputFeatures"],
-            n_classes=args["nClasses"],
-            hidden_dim=args["nUnits"],
-            n_head=args["nhead"],
-            layer_dim=args["nLayers"],
-            nDays=len(loadedData["train"]),
-            dropout=args["dropout"],
-            device=device,
-            strideLen=args["strideLen"],
-            kernelLen=args["kernelLen"],
-            gaussianSmoothWidth=args["gaussianSmoothWidth"],    
-            temporalMaxLen=args["temporalMaxLen"],
-            temporalMaskP=args["temporalMaskProb"],
-            temporalMaskValue=0.0,
-            temporalNumMask=args["temporalNumMask"],
-        ).to(device)
-        if args['load_weights']:
-            model.load_state_dict(torch.load(args['load_weights_path'], map_location=device))
-
+    # =======================================
+    # Load pretrained model if specified
+    if args.get('pretrainedWeights'):
+        model.load_state_dict(torch.load(args['pretrainedWeights']))
+    # =======================================
 
     loss_ctc = torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=args["lrStart"],
         betas=(0.9, 0.999),
+
+        # ====================================
+        # change the epsilon value from 0.1(given) to 1e-8
         eps=1e-5,
+        # ====================================
         weight_decay=args["l2_decay"],
     )
     scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -186,7 +144,7 @@ def trainModel(args):
             y_len,
         )
         loss = torch.sum(loss)
-        train_loss = loss.item()
+
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
@@ -248,7 +206,7 @@ def trainModel(args):
 
                 endTime = time.time()
                 print(
-                    f"batch {batch}, train ctc loss : {train_loss:>7f}, eval ctc loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
+                    f"batch {batch}, ctc loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
                 )
                 startTime = time.time()
 
@@ -282,10 +240,6 @@ def loadModel(modelDir, nInputLayers=24, device="cuda"):
         kernelLen=args["kernelLen"],
         gaussianSmoothWidth=args["gaussianSmoothWidth"],
         bidirectional=args["bidirectional"],
-        temporalMaxLen=args["temporalMaxLen"],
-        temporalMaskP=args["temporalMaskProb"],
-        temporalMaskValue=args["temporalMaskValue"],
-        temporalNumMask=args['temporalNumMask'],
     ).to(device)
 
     model.load_state_dict(torch.load(modelWeightPath, map_location=device))
